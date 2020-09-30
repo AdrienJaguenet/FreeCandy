@@ -183,40 +183,34 @@ void remove_cluster(Grid* grid, int x, int y)
 	  }
 	}
 	for (int i = 0; i < grid->width; ++i) {
-	  // We start from the bottom up
-	  for (int j = grid->height - 1; j >= 0; --j) {
-		// How much offset we have accumulated already
-		float current_y = 0.f;
-		Cell* cell = &grid->cells[i][j];
-		if (cell->type == CELL_VOID || current_y > 0.f) {
-		  CellType new_type = CELL_VOID;
-		  if (cell->type == CELL_VOID && current_y == 0.f) {
-			current_y = 1.f;
-		  }
-
-		  // Find which cell this one will copy
-		  for (int k = j - 1; k >= 0; --k) {
-			Cell* other = &grid->cells[i][k];
-
-			// found a non-void cell, will copy that one
-			if (other->type != CELL_VOID) {
-			  new_type = other->type;
-			  other->type = CELL_VOID;
+	  // We start from second-to-last cell
+	  for (int j = grid->height - 2; j >= 0; --j) {
+		// Will it fall ?
+		Cell* this = get_cell_or_null(grid, i, j);
+		Cell* below = get_cell_or_null(grid, i, j + 1);
+		if (this->type != CELL_VOID && below->type == CELL_VOID) {
+		  // Find the next non-empty cell, or the bottom
+		  int k = j + 1;
+		  for (; k < grid->height; ++k) {
+			below = get_cell_or_null(grid, i, k);
+			if (below->type != CELL_VOID) { // we found one!
 			  break;
 			}
-			current_y += 1.f;
 		  }
-
-		  // no non-null cell has been found, giving a random new value
-		  if (new_type == CELL_VOID) {
-			new_type = random_cell_type();
-		  }
-
-		  // set cell to falling
-		  cell->type = new_type;
-		  cell->fall_y = current_y;
-		  cell->fall_vy = 0.f;
+		  // Exchange the cells and set the falling amount
+		  below->fall_y = (float) (k - j);
+		  below->type = this->type;
+		  this->type = CELL_VOID;
 		}
+	  }
+	  // All cells at the top should be void
+	  // Count them all
+	  int n_void = 0;
+	  while (get_cell_or_null(grid, i, n_void++)->type == CELL_VOID);
+	  for (int j = 0; j < n_void; ++j) {
+		Cell* this = get_cell_or_null(grid, i, j);
+		this->fall_y = (float) n_void;
+		this->type = random_cell_type();
 	  }
 	}
 }
