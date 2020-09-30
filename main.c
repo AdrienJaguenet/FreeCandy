@@ -13,7 +13,7 @@ typedef enum {
 typedef struct {
   CellType type;
   float fall_y;
-  bool falling;
+  float fall_vy;
 
   // contiguous cells detection algorithm
   bool selected;
@@ -56,8 +56,8 @@ Grid* newGrid(int width, int height)
 	grid->cells[i] = malloc(sizeof(Cell) * height);
 	for (int j = 0; j < height; ++j) {
 	  grid->cells[i][j].type = random_cell_type();
-	  grid->cells[i][j].falling = false;
 	  grid->cells[i][j].fall_y = 0.f;
+	  grid->cells[i][j].fall_vy = 0.f;
 	}
   }
   return grid;
@@ -76,7 +76,7 @@ void draw_cell(GFXContext* context, Cell* cell, int i, int j)
 {
   SDL_Rect cell_rect = {i * 70, j * 70, 64, 64};
   SDL_Renderer* renderer = context->renderer;
-  if (cell->falling) {
+  if (cell->fall_y > 0.f) {
 	cell_rect.y -= 70 * cell->fall_y;
   }
   switch (cell->type) {
@@ -97,10 +97,10 @@ void draw_cell(GFXContext* context, Cell* cell, int i, int j)
   SDL_RenderDrawRect(renderer, &cell_rect);
 }
 
-Cell* get_up_or_null(Grid* grid, int x, int y)
+Cell* get_cell_or_null(Grid* grid, int x, int y)
 {
-  if (x > 0) {
-	return &grid->cells[x][y - 1];
+  if (x >= 0 && x < grid->width && y >= 0 && y < grid->height) {
+	return &grid->cells[x][y];
   } else {
 	return NULL;
   }
@@ -108,25 +108,10 @@ Cell* get_up_or_null(Grid* grid, int x, int y)
 
 void get_moore_neighbours(Grid* grid, int x, int y, Cell** up, Cell** down, Cell** left, Cell** right)
 {
-  if (x > 0) {
-	*left = &grid->cells[x - 1][y];
-  } else {
-	*left = NULL;
-  }
-
-  if (x < grid->width - 1) {
-	*right = &grid->cells[x + 1][y];
-  } else {
-	*right = NULL;
-  }
-
-  *up = get_up_or_null(grid, x, y);
-
-  if (y < grid->height- 1) {
-	*down = &grid->cells[x][y + 1];
-  } else {
-	*down = NULL;
-  }
+  *left = get_cell_or_null(grid, x - 1, y);
+  *right = get_cell_or_null(grid, x + 1, y);
+  *up = get_cell_or_null(grid, x, y - 1);
+  *down = get_cell_or_null(grid, x, y + 1);
 }
 
 void select_contiguous(Grid* grid, int src_x, int src_y)
@@ -150,27 +135,10 @@ void select_contiguous(Grid* grid, int src_x, int src_y)
   }
 }
 
-void remove_cell(Grid* grid, int x, int y)
-{
-  Cell* this = &grid->cells[x][y];
-  this->falling = true;
-  this->fall_y = 1.f;
-  for (int i = y - 1; i >= 0; --i) {
-	Cell* other = &grid->cells[x][i];
-	if (other->type != CELL_VOID) {
-	  this->fall_y = (float) y - i;
-	  this->type = other->type;
-	  remove_cell(grid, x, i);
-	  return;
-	}
-  }
-  this->type = random_cell_type();
-}
-
 void draw_grid(GFXContext* context, Grid* grid)
 {
   for (int i = 0; i < grid->width; ++i) {
-	for (int j = 0; j < grid->height; ++j) {
+	for (int j = grid->height - 1; j >= 0; --j) {
 	  draw_cell(context, &grid->cells[i][j], i, j);
 	}
   }
@@ -182,25 +150,21 @@ void update_grid(Grid* grid, float dt)
   for (int i = 0; i < grid->width; ++i) {
 	for (int j = 0; j < grid->height; ++j) {
 	  Cell* cell = &grid->cells[i][j];
-	  if (cell->falling) {
+	  if (cell->fall_y > 0) {
 		grid->stable = false;
-		cell->fall_y -= dt;
+		cell->fall_vy += dt * 0.5f;
+		cell->fall_y -= cell->fall_vy * dt;
 	  }
 	  if (cell->fall_y < 0.f) {
-		cell->falling = false;
 		cell->fall_y = 0.f;
+		cell->fall_vy = 0.f;
 	  }
 	}
   }
 }
 
-void handle_click(Grid* grid, int x, int y)
+void remove_cluster(Grid* grid, int x, int y)
 {
-  int gridx = x / 70;
-  int gridy = y / 70;
-  if (grid->stable &&
-	  gridx >= 0 && gridx < grid->width &&
-	  gridy >= 0 && gridy < grid->height) {
 	// mark all cells as unselected
 	for (int i = 0; i < grid->width; ++i) {
 	  for (int j = 0; j < grid->height; ++j) {
@@ -208,7 +172,7 @@ void handle_click(Grid* grid, int x, int y)
 	  }
 	}
 	// select cells next to the clicked one
-	select_contiguous(grid, gridx, gridy);
+	select_contiguous(grid, x, y);
 
 	// delete selected cells
 	for (int i = 0; i < grid->width; ++i) {
@@ -219,18 +183,60 @@ void handle_click(Grid* grid, int x, int y)
 	  }
 	}
 	for (int i = 0; i < grid->width; ++i) {
-	  for (int j = 0; j < grid->height; ++j) {
-		if (grid->cells[i][j].selected) {
-		  remove_cell(grid, i, j);
+	  // We start from the bottom up
+	  for (int j = grid->height - 1; j >= 0; --j) {
+		// How much offset we have accumulated already
+		float current_y = 0.f;
+		Cell* cell = &grid->cells[i][j];
+		if (cell->type == CELL_VOID || current_y > 0.f) {
+		  CellType new_type = CELL_VOID;
+		  if (cell->type == CELL_VOID && current_y == 0.f) {
+			current_y = 1.f;
+		  }
+
+		  // Find which cell this one will copy
+		  for (int k = j - 1; k >= 0; --k) {
+			Cell* other = &grid->cells[i][k];
+
+			// found a non-void cell, will copy that one
+			if (other->type != CELL_VOID) {
+			  new_type = other->type;
+			  other->type = CELL_VOID;
+			  break;
+			}
+			current_y += 1.f;
+		  }
+
+		  // no non-null cell has been found, giving a random new value
+		  if (new_type == CELL_VOID) {
+			new_type = random_cell_type();
+		  }
+
+		  // set cell to falling
+		  cell->type = new_type;
+		  cell->fall_y = current_y;
+		  cell->fall_vy = 0.f;
 		}
 	  }
 	}
+}
+
+void handle_click(Grid* grid, int x, int y)
+{
+  int gridx = x / 70;
+  int gridy = y / 70;
+  if (gridx >= 0 && gridx < grid->width &&
+	  gridy >= 0 && gridy < grid->height) {
+	  printf("fall_vy for %d, %d : %.4f\n", gridx, gridy, get_cell_or_null(grid, gridx, gridy)->fall_vy);
+	  if (grid->stable) {
+		remove_cluster(grid, gridx, gridy);
+	  }
   }
 }
 
 int main()
 {
-  srand(0);
+  srand(1);
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
 	perror(SDL_GetError());
 	return -1;
@@ -241,23 +247,30 @@ int main()
 
   bool running = true;
   SDL_Event event;
-  while (running) {
-	while (SDL_PollEvent(&event)) {
-	  switch (event.type) {
-		case SDL_QUIT:
-		  running = false;
-		  break;
-		case SDL_MOUSEBUTTONDOWN:
-		  handle_click(grid, event.button.x, event.button.y);
-		  break;
-	  }
-	}
 
-	update_grid(grid, 0.002f);
-	SDL_SetRenderDrawColor(context.renderer, 0, 0, 0, 255);
-	SDL_RenderClear(context.renderer);
-	draw_grid(&context, grid);
-	SDL_RenderPresent(context.renderer);
+  int t0 = SDL_GetTicks(), t = t0, st = 0.f;
+  while (running) {
+	t = SDL_GetTicks();
+	st += t - t0;
+	t0 = t;
+	while (st > 40) {
+	  st -= 40;
+	  while (SDL_PollEvent(&event)) {
+		switch (event.type) {
+		  case SDL_QUIT:
+			running = false;
+			break;
+		  case SDL_MOUSEBUTTONDOWN:
+			handle_click(grid, event.button.x, event.button.y);
+			break;
+		}
+	  }
+	  update_grid(grid, 0.04f);
+	  SDL_SetRenderDrawColor(context.renderer, 0, 0, 0, 255);
+	  SDL_RenderClear(context.renderer);
+	  draw_grid(&context, grid);
+	  SDL_RenderPresent(context.renderer);
+	}
   }
 
   delGrid(&grid);
