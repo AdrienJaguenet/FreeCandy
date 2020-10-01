@@ -1,5 +1,5 @@
 SOURCES=main.c
-LDFLAGS=-lSDL2
+LDFLAGS=-lSDL2 -lSDL2_mixer
 CFLAGS=-Wall -Werror -Wextra -g
 CC=gcc
 

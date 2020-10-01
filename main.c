@@ -1,4 +1,5 @@
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_mixer.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,13 @@ typedef struct {
   int grid_size_px;
 } GFXContext;
 
+typedef struct {
+  struct {
+	Mix_Chunk *popped;
+	Mix_Chunk *cant_pop;
+  } effects;
+} SFXContext;
+
 CellType random_cell_type()
 {
   switch (rand() % 5) {
@@ -49,6 +57,11 @@ CellType random_cell_type()
 	default:
 	  return CELL_VOID;
   }
+}
+
+void play_audio(Mix_Chunk* sample)
+{
+  Mix_PlayChannel(-1, sample, 0);
 }
 
 Grid* newGrid(int width, int height)
@@ -168,7 +181,7 @@ void update_grid(Grid* grid, float dt)
 	  Cell* cell = get_cell_or_null(grid, i, j);
 	  if (cell->fall_y > 0) {
 		grid->stable = false;
-		cell->fall_vy += dt * 8.f;
+		cell->fall_vy += dt * 16.f;
 		cell->fall_y -= cell->fall_vy * dt;
 	  }
 	  if (cell->fall_y < 0.f) {
@@ -179,7 +192,8 @@ void update_grid(Grid* grid, float dt)
   }
 }
 
-void remove_cluster(Grid* grid, int x, int y)
+// returns true if a cluster has been removed
+bool remove_cluster(Grid* grid, int x, int y)
 {
 	// mark all cells as unselected
 	for (int i = 0; i < grid->width; ++i) {
@@ -190,7 +204,7 @@ void remove_cluster(Grid* grid, int x, int y)
 	// select cells next to the clicked one
 	int cluster_size = select_contiguous(grid, x, y);
 	if (cluster_size < 3) {
-	  return;
+	  return false;
 	}
 
 	// delete selected cells
@@ -239,29 +253,64 @@ void remove_cluster(Grid* grid, int x, int y)
 		this->type = random_cell_type();
 	  }
 	}
+	return true;
 }
 
-void handle_click(Grid* grid, int x, int y)
+void handle_click(Grid* grid, int x, int y, SFXContext* sfx_context)
 {
   int gridx = x / 70;
   int gridy = y / 70;
   if (gridx >= 0 && gridx < grid->width &&
 	  gridy >= 0 && gridy < grid->height) {
 	  if (grid->stable) {
-		remove_cluster(grid, gridx, gridy);
+		if (remove_cluster(grid, gridx, gridy)) {
+		  play_audio(sfx_context->effects.popped);
+		} else {
+		  play_audio(sfx_context->effects.cant_pop);
+		}
 	  }
+  } else {
+		  play_audio(sfx_context->effects.cant_pop);
   }
+}
+
+void try_load_wav(Mix_Chunk** chunk, const char* path)
+{
+  *chunk = Mix_LoadWAV(path);
+  if (*chunk == NULL) {
+	printf("Could not load WAV at '%s'. Reason: '%s'.\n", path, Mix_GetError());
+  }
+}
+
+void load_sfx(SFXContext* ctx)
+{
+  try_load_wav(&ctx->effects.popped, "sfx/pop.wav");
+  try_load_wav(&ctx->effects.cant_pop, "sfx/err.wav");
+}
+
+void clean_sfx(SFXContext* ctx)
+{
+  Mix_FreeChunk(ctx->effects.popped);
+  Mix_FreeChunk(ctx->effects.cant_pop);
 }
 
 int main()
 {
+  GFXContext gfx_context;
+  SFXContext sfx_context;
+
   srand(1);
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
 	perror(SDL_GetError());
 	return -1;
   }
-  GFXContext context;
-  SDL_CreateWindowAndRenderer(800, 600, 0, &context.window, &context.renderer);
+  Mix_Init(0);
+  if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0) {
+	printf("SDL_mixer error!\n");
+	return -1;
+  }
+  load_sfx(&sfx_context);
+  SDL_CreateWindowAndRenderer(800, 600, 0, &gfx_context.window, &gfx_context.renderer);
   Grid* grid = newGrid(8, 8);
 
   bool running = true;
@@ -280,21 +329,23 @@ int main()
 			running = false;
 			break;
 		  case SDL_MOUSEBUTTONDOWN:
-			handle_click(grid, event.button.x, event.button.y);
+			handle_click(grid, event.button.x, event.button.y, &sfx_context);
 			break;
 		}
 	  }
 	  update_grid(grid, 0.04f);
-	  SDL_SetRenderDrawColor(context.renderer, 0, 0, 0, 255);
-	  SDL_RenderClear(context.renderer);
-	  draw_grid(&context, grid);
-	  SDL_RenderPresent(context.renderer);
+	  SDL_SetRenderDrawColor(gfx_context.renderer, 0, 0, 0, 255);
+	  SDL_RenderClear(gfx_context.renderer);
+	  draw_grid(&gfx_context, grid);
+	  SDL_RenderPresent(gfx_context.renderer);
 	}
   }
 
   delGrid(&grid);
-  SDL_DestroyRenderer(context.renderer);
-  SDL_DestroyWindow(context.window);
+  SDL_DestroyRenderer(gfx_context.renderer);
+  SDL_DestroyWindow(gfx_context.window);
+  clean_sfx(&sfx_context);
+  Mix_CloseAudio();
   SDL_Quit();
   return 0;
 }
