@@ -1,4 +1,4 @@
-SOURCES=main.c
+SOURCES=main.c audio.c grid.c
 LDFLAGS=-lSDL2 -lSDL2_mixer
 CFLAGS=-Wall -Werror -Wextra -g
 CC=gcc
