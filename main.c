@@ -116,7 +116,7 @@ void get_moore_neighbours(Grid* grid, int x, int y, Cell** up, Cell** down, Cell
 
 void select_contiguous(Grid* grid, int src_x, int src_y)
 {
-  Cell *src = &grid->cells[src_x][src_y];
+  Cell *src = get_cell_or_null(grid, src_x, src_y);
   Cell *up, *down, *left, *right;
   get_moore_neighbours(grid, src_x, src_y, &up, &down, &left, &right);
   src->selected = true;
@@ -139,7 +139,7 @@ void draw_grid(GFXContext* context, Grid* grid)
 {
   for (int i = 0; i < grid->width; ++i) {
 	for (int j = grid->height - 1; j >= 0; --j) {
-	  draw_cell(context, &grid->cells[i][j], i, j);
+	  draw_cell(context, get_cell_or_null(grid, i, j), i, j);
 	}
   }
 }
@@ -149,10 +149,10 @@ void update_grid(Grid* grid, float dt)
   grid->stable = true;
   for (int i = 0; i < grid->width; ++i) {
 	for (int j = 0; j < grid->height; ++j) {
-	  Cell* cell = &grid->cells[i][j];
+	  Cell* cell = get_cell_or_null(grid, i, j);
 	  if (cell->fall_y > 0) {
 		grid->stable = false;
-		cell->fall_vy += dt * 0.5f;
+		cell->fall_vy += dt * 8.f;
 		cell->fall_y -= cell->fall_vy * dt;
 	  }
 	  if (cell->fall_y < 0.f) {
@@ -168,36 +168,41 @@ void remove_cluster(Grid* grid, int x, int y)
 	// mark all cells as unselected
 	for (int i = 0; i < grid->width; ++i) {
 	  for (int j = 0; j < grid->height; ++j) {
-		grid->cells[i][j].selected = false;
+		get_cell_or_null(grid, i, j)->selected = false;
 	  }
 	}
 	// select cells next to the clicked one
 	select_contiguous(grid, x, y);
 
 	// delete selected cells
+	int n_removed = 0;
 	for (int i = 0; i < grid->width; ++i) {
 	  for (int j = 0; j < grid->height; ++j) {
-		if (grid->cells[i][j].selected) {
-		  grid->cells[i][j].type = CELL_VOID;
+		Cell* this = get_cell_or_null(grid, i, j);
+		if (this->selected) {
+		  this->type = CELL_VOID;
+		  ++ n_removed;
 		}
 	  }
 	}
+
 	for (int i = 0; i < grid->width; ++i) {
 	  // We start from second-to-last cell
 	  for (int j = grid->height - 2; j >= 0; --j) {
-		// Will it fall ?
 		Cell* this = get_cell_or_null(grid, i, j);
 		Cell* below = get_cell_or_null(grid, i, j + 1);
+		// Will it fall ?
 		if (this->type != CELL_VOID && below->type == CELL_VOID) {
 		  // Find the next non-empty cell, or the bottom
-		  int k = j + 1;
-		  for (; k < grid->height; ++k) {
+		  int k = grid->height - 1;
+		  while (k > j) {
 			below = get_cell_or_null(grid, i, k);
-			if (below->type != CELL_VOID) { // we found one!
+			if (below->type == CELL_VOID) {
 			  break;
 			}
+			--k;
 		  }
-		  // Exchange the cells and set the falling amount
+
 		  below->fall_y = (float) (k - j);
 		  below->type = this->type;
 		  this->type = CELL_VOID;
@@ -206,7 +211,9 @@ void remove_cluster(Grid* grid, int x, int y)
 	  // All cells at the top should be void
 	  // Count them all
 	  int n_void = 0;
-	  while (get_cell_or_null(grid, i, n_void++)->type == CELL_VOID);
+	  while (n_void < grid->height && get_cell_or_null(grid, i, n_void)->type == CELL_VOID) {
+		++n_void;
+	  }
 	  for (int j = 0; j < n_void; ++j) {
 		Cell* this = get_cell_or_null(grid, i, j);
 		this->fall_y = (float) n_void;
@@ -221,7 +228,6 @@ void handle_click(Grid* grid, int x, int y)
   int gridy = y / 70;
   if (gridx >= 0 && gridx < grid->width &&
 	  gridy >= 0 && gridy < grid->height) {
-	  printf("fall_vy for %d, %d : %.4f\n", gridx, gridy, get_cell_or_null(grid, gridx, gridy)->fall_vy);
 	  if (grid->stable) {
 		remove_cluster(grid, gridx, gridy);
 	  }
@@ -237,7 +243,7 @@ int main()
   }
   GFXContext context;
   SDL_CreateWindowAndRenderer(800, 600, 0, &context.window, &context.renderer);
-  Grid* grid = newGrid(8, 8);
+  Grid* grid = newGrid(5, 5);
 
   bool running = true;
   SDL_Event event;
