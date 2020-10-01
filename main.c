@@ -7,7 +7,9 @@ typedef enum {
   CELL_VOID = 0,
   CELL_DIAMOND = 1,
   CELL_EMERALD = 2,
-  CELL_RUBY = 3
+  CELL_RUBY = 3,
+  CELL_GRAPE = 4,
+  CELL_BANANA = 5
 } CellType;
 
 typedef struct {
@@ -33,13 +35,17 @@ typedef struct {
 
 CellType random_cell_type()
 {
-  switch (rand() % 3) {
+  switch (rand() % 5) {
 	case 0:
 	  return CELL_DIAMOND;
 	case 1:
 	  return CELL_EMERALD;
 	case 2:
 	  return CELL_RUBY;
+	case 3:
+	  return CELL_GRAPE;
+	case 4:
+	  return CELL_BANANA;
 	default:
 	  return CELL_VOID;
   }
@@ -89,6 +95,14 @@ void draw_cell(GFXContext* context, Cell* cell, int i, int j)
 	case CELL_RUBY:
 	  SDL_SetRenderDrawColor(renderer, 255, 63, 63, 255);
 	  break;
+	case CELL_GRAPE:
+	  SDL_SetRenderDrawColor(renderer, 255, 63, 255, 255);
+	  break;
+	case CELL_BANANA:
+	  SDL_SetRenderDrawColor(renderer, 255, 255, 63, 255);
+	  break;
+
+
 
 	case CELL_VOID:
 	default:
@@ -114,25 +128,27 @@ void get_moore_neighbours(Grid* grid, int x, int y, Cell** up, Cell** down, Cell
   *down = get_cell_or_null(grid, x, y + 1);
 }
 
-void select_contiguous(Grid* grid, int src_x, int src_y)
+int select_contiguous(Grid* grid, int src_x, int src_y)
 {
+  int acc = 1;
   Cell *src = get_cell_or_null(grid, src_x, src_y);
   Cell *up, *down, *left, *right;
   get_moore_neighbours(grid, src_x, src_y, &up, &down, &left, &right);
   src->selected = true;
 
   if (up && !up->selected && up->type == src->type) {
-	select_contiguous(grid, src_x, src_y - 1);
+	acc += select_contiguous(grid, src_x, src_y - 1);
   }
   if (down && !down->selected && down->type == src->type) {
-	select_contiguous(grid, src_x, src_y + 1);
+	acc += select_contiguous(grid, src_x, src_y + 1);
   }
   if (left && !left->selected && left->type == src->type) {
-	select_contiguous(grid, src_x - 1, src_y);
+	acc += select_contiguous(grid, src_x - 1, src_y);
   }
   if (right && !right->selected && right->type == src->type) {
-	select_contiguous(grid, src_x + 1, src_y);
+	acc += select_contiguous(grid, src_x + 1, src_y);
   }
+  return acc;
 }
 
 void draw_grid(GFXContext* context, Grid* grid)
@@ -172,7 +188,10 @@ void remove_cluster(Grid* grid, int x, int y)
 	  }
 	}
 	// select cells next to the clicked one
-	select_contiguous(grid, x, y);
+	int cluster_size = select_contiguous(grid, x, y);
+	if (cluster_size < 3) {
+	  return;
+	}
 
 	// delete selected cells
 	int n_removed = 0;
@@ -243,7 +262,7 @@ int main()
   }
   GFXContext context;
   SDL_CreateWindowAndRenderer(800, 600, 0, &context.window, &context.renderer);
-  Grid* grid = newGrid(5, 5);
+  Grid* grid = newGrid(8, 8);
 
   bool running = true;
   SDL_Event event;
